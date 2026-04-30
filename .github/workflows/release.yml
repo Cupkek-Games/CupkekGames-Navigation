@@ -1,0 +1,11 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+jobs:
+  release:
+    uses: Cupkek-Games/.github/.github/workflows/upm-release.yml@main
+    permissions:
+      contents: write

@@ -1,0 +1,17 @@
+{
+  "name": "com.cupkekgames.navigation",
+  "displayName": "CupkekGames Navigation",
+  "version": "0.1.0",
+  "author": {
+    "name": "CupkekGames",
+    "url": "https://www.docs.cupkek.games"
+  },
+  "unity": "6000.0",
+  "documentationUrl": "https://docs.cupkek.games/",
+  "description": "Navmesh agent controller for CupkekGames games. Wraps UnityEngine.AI.NavMesh primitives.",
+  "keywords": [
+    "Navigation",
+    "CupkekGames"
+  ],
+  "dependencies": {}
+}
