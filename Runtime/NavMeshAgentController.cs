@@ -22,16 +22,13 @@ namespace CupkekGames.Navigation
     public static float Acceleration = 8f;
 
     public static float StoppingDistance = .2f;
-    // Obstacle Avoidance // Comment out, this is configured by agent type
-    // public static float Radius = 0.25f;
-    // public static float Height = 1f;
 
     // References
     private NavMeshAgent _navMeshAgent;
     public NavMeshAgent NavMeshAgent => _navMeshAgent;
-    private ILocomotion _locomotion;
+    private IAnimationStateController _animationController;
 
-    public ILocomotion Locomotion => _locomotion;
+    public IAnimationStateController AnimationController => _animationController;
 
     // Monitor
     private Coroutine _monitorCoroutine;
@@ -67,12 +64,12 @@ namespace CupkekGames.Navigation
       // _navMeshAgent.radius = Radius;
       // _navMeshAgent.height = Height;
 
-      _locomotion = GetComponentInChildren<ILocomotion>();
+      _animationController = GetComponentInChildren<IAnimationStateController>();
     }
 
-    public void SetLocomotion(ILocomotion locomotion)
+    public void SetAnimationController(IAnimationStateController controller)
     {
-      _locomotion = locomotion;
+      _animationController = controller;
     }
 
     public void StartMonitoringAgent()
@@ -119,13 +116,13 @@ namespace CupkekGames.Navigation
     {
       if (_navMeshAgent.remainingDistance <= _stopDistance)
       {
-        _locomotion.PlayIdle();
+        _animationController.Play(AnimationKinds.Idle);
 
         OnDestinationReached?.Invoke();
       }
       else
       {
-        _locomotion.PlayWalk();
+        _animationController.Play(AnimationKinds.Walk);
       }
     }
 
@@ -157,11 +154,11 @@ namespace CupkekGames.Navigation
       {
         if (IsInRange(_navMeshAgent.transform, follow, _stopDistance, 0.1f))
         {
-          _locomotion.PlayIdle();
+          _animationController.Play(AnimationKinds.Idle);
         }
         else
         {
-          _locomotion.PlayWalk();
+          _animationController.Play(AnimationKinds.Walk);
         }
       }
     }
@@ -201,7 +198,7 @@ namespace CupkekGames.Navigation
         if (IsInRange(_navMeshAgent.transform, follow, _stopDistance, 0f))
         {
           _navMeshAgent.enabled = false;
-          _locomotion.PlayIdle();
+          _animationController.Play(AnimationKinds.Idle);
           LookAtTarget(follow);
           if (debug)
           {
@@ -434,11 +431,6 @@ namespace CupkekGames.Navigation
         else
         {
           float newSpeed = Speed * timeScale;
-
-          // if (Mathf.Approximately(newSpeed, _navMeshAgent.speed))
-          // {
-          //   return;
-          // }
 
           _navMeshAgent.speed = newSpeed;
           _navMeshAgent.angularSpeed = AngularSpeed * timeScale;
