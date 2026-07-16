@@ -6,6 +6,7 @@ on:
 
 jobs:
   release:
-    uses: Cupkek-Games/.github/.github/workflows/upm-release.yml@main
+    uses: Cupkek-Games/.github/.github/workflows/upm-release.yml@main
+    secrets: inherit
     permissions:
       contents: write
