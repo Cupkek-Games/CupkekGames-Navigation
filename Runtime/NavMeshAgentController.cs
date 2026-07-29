@@ -114,15 +114,16 @@ namespace CupkekGames.Navigation
 
     private void AgentMonitorTick()
     {
+      // Rigs without an animation backend still navigate; they just don't animate.
       if (_navMeshAgent.remainingDistance <= _stopDistance)
       {
-        _animationController.Play(AnimationKinds.Idle);
+        _animationController?.Play(AnimationKinds.Idle);
 
         OnDestinationReached?.Invoke();
       }
       else
       {
-        _animationController.Play(AnimationKinds.Walk);
+        _animationController?.Play(AnimationKinds.Walk);
       }
     }
 
@@ -154,11 +155,11 @@ namespace CupkekGames.Navigation
       {
         if (IsInRange(_navMeshAgent.transform, follow, _stopDistance, 0.1f))
         {
-          _animationController.Play(AnimationKinds.Idle);
+          _animationController?.Play(AnimationKinds.Idle);
         }
         else
         {
-          _animationController.Play(AnimationKinds.Walk);
+          _animationController?.Play(AnimationKinds.Walk);
         }
       }
     }
@@ -198,7 +199,7 @@ namespace CupkekGames.Navigation
         if (IsInRange(_navMeshAgent.transform, follow, _stopDistance, 0f))
         {
           _navMeshAgent.enabled = false;
-          _animationController.Play(AnimationKinds.Idle);
+          _animationController?.Play(AnimationKinds.Idle);
           LookAtTarget(follow);
           if (debug)
           {
