@@ -7,20 +7,26 @@ using PrimeTween;
 using UnityEngine;
 using UnityEngine.AI;
 using CupkekGames.Animations;
+using Unity.Scripting.LifecycleManagement;
 
 namespace CupkekGames.Navigation
 {
   [RequireComponent(typeof(NavMeshAgent))]
-  public class NavMeshAgentController : MonoBehaviour
+  public partial class NavMeshAgentController : MonoBehaviour
   {
     // Static variables
+    [NoAutoStaticsCleanup]
     public static float MonitorFrequency = 0.1f;
 
     // Steering
+    [NoAutoStaticsCleanup]
     public static float Speed = 1f;
+    [NoAutoStaticsCleanup]
     public static float AngularSpeed = 3200f;
+    [NoAutoStaticsCleanup]
     public static float Acceleration = 8f;
 
+    [NoAutoStaticsCleanup]
     public static float StoppingDistance = .2f;
 
     // References
