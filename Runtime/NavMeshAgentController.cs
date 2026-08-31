@@ -261,11 +261,18 @@ namespace CupkekGames.Navigation
 
       // Calculate the direction to the target
       Vector3 direction = target.position - transform.position;
+      if (direction.sqrMagnitude < 0.0001f)
+      {
+        return; // LookRotation on a zero vector logs its own warning
+      }
 
       // Calculate the target rotation
       Quaternion targetRotation = Quaternion.LookRotation(direction);
 
-      if (transform.rotation == targetRotation)
+      // Quaternion == uses a ~1e-6 dot epsilon, far tighter than PrimeTween's
+      // endValue-equals-current check - near-identical targets slipped through
+      // and spammed its warning every re-issue. Half a degree is invisible.
+      if (Quaternion.Angle(transform.rotation, targetRotation) < 0.5f)
       {
         return;
       }
