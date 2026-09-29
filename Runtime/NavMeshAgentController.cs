@@ -29,6 +29,18 @@ namespace CupkekGames.Navigation
     [NoAutoStaticsCleanup]
     public static float StoppingDistance = .2f;
 
+    // The kind played while the agent moves: Walk, or a rig's own moving
+    // kind (a unit that runs to its targets plays its Run).
+    [Tooltip("The animation kind played while the agent moves.")]
+    [SerializeField] private string _moveAnimationKind = AnimationKinds.Walk;
+
+    /// <summary>The animation kind played while the agent moves (Walk unless the rig says otherwise).</summary>
+    public string MoveAnimationKind
+    {
+      get => _moveAnimationKind;
+      set => _moveAnimationKind = value;
+    }
+
     // References
     private NavMeshAgent _navMeshAgent;
     public NavMeshAgent NavMeshAgent => _navMeshAgent;
@@ -129,7 +141,7 @@ namespace CupkekGames.Navigation
       }
       else
       {
-        _animationController?.Play(AnimationKinds.Walk);
+        _animationController?.Play(_moveAnimationKind);
       }
     }
 
@@ -165,7 +177,7 @@ namespace CupkekGames.Navigation
         }
         else
         {
-          _animationController?.Play(AnimationKinds.Walk);
+          _animationController?.Play(_moveAnimationKind);
         }
       }
     }
