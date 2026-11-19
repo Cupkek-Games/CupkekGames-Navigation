@@ -1,7 +1,7 @@
 ﻿{
   "name": "com.cupkekgames.navigation",
   "displayName": "CupkekGames Navigation",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "author": {
     "name": "CupkekGames",
     "url": "https://www.docs.cupkek.games"
@@ -13,5 +13,8 @@
     "Navigation",
     "CupkekGames"
   ],
-  "dependencies": {}
+  "dependencies": {
+    "com.cupkekgames.animations": "0.4.0",
+    "com.cupkekgames.timesystem": "0.5.0"
+  }
 }

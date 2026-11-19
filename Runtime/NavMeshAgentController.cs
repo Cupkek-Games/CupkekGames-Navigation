@@ -11,6 +11,15 @@ using Unity.Scripting.LifecycleManagement;
 
 namespace CupkekGames.Navigation
 {
+  /// <summary>
+  /// A <see cref="NavMeshAgent"/> with its locomotion: what the rig plays
+  /// follows how fast the agent really goes (its move kind while it moves,
+  /// Idle while it stands, played only when that changes, so a looping clip
+  /// is never restarted and a one-shot is never stomped), an optional eased
+  /// turn toward where it goes, and an arrival event once per destination
+  /// given through <see cref="MoveTo"/>. A one-shot owns the rig through
+  /// <see cref="HoldLocomotion"/>; locomotion takes it back as the hold ends.
+  /// </summary>
   [RequireComponent(typeof(NavMeshAgent))]
   public partial class NavMeshAgentController : MonoBehaviour
   {
@@ -31,27 +40,60 @@ namespace CupkekGames.Navigation
 
     // The kind played while the agent moves: Walk, or a rig's own moving
     // kind (a unit that runs to its targets plays its Run).
+    [Header("Locomotion")]
     [Tooltip("The animation kind played while the agent moves.")]
     [SerializeField] private string _moveAnimationKind = AnimationKinds.Walk;
+    [Tooltip("A standing agent starts its move kind above this speed, in m/s.")]
+    [SerializeField] private float _startMovingSpeed = 0.5f;
+    [Tooltip("A moving agent goes back to Idle below this speed, in m/s...")]
+    [SerializeField] private float _stopMovingSpeed = 0.2f;
+    [Tooltip("...once it has been below it this long, in seconds (a corner or a bump never flickers it to Idle).")]
+    [SerializeField] private float _stopDelay = 0.12f;
+    [Tooltip("0: the agent turns itself. Above 0: the controller eases the facing toward where the agent really goes, this sharp (about 12 is brisk).")]
+    [SerializeField] private float _turnSharpness;
 
-    /// <summary>The animation kind played while the agent moves (Walk unless the rig says otherwise).</summary>
+    /// <summary>The animation kind played while the agent moves (Walk unless the rig says otherwise). A change plays at once while it moves.</summary>
     public string MoveAnimationKind
     {
       get => _moveAnimationKind;
-      set => _moveAnimationKind = value;
+      set
+      {
+        if (_moveAnimationKind == value) return;
+        _moveAnimationKind = value;
+        if (_playedKind != AnimationKinds.Idle) _playedKind = null;
+      }
+    }
+
+    /// <summary>How sharply the controller turns the agent toward where it goes; 0 hands turning back to the agent.</summary>
+    public float TurnSharpness
+    {
+      get => _turnSharpness;
+      set
+      {
+        _turnSharpness = Mathf.Max(0f, value);
+        if (_navMeshAgent != null) _navMeshAgent.updateRotation = _turnSharpness <= 0f;
+      }
     }
 
     // References
     private NavMeshAgent _navMeshAgent;
     public NavMeshAgent NavMeshAgent => _navMeshAgent;
     private IAnimationStateController _animationController;
+    private AnimationClip _idleClip;
 
     public IAnimationStateController AnimationController => _animationController;
 
-    // Monitor
-    private Coroutine _monitorCoroutine;
+    // Locomotion: driven or not, the kind played last (null: it plays again
+    // on the next frame), since when a moving agent has been slow, the holds
+    // on it, and whether a destination given through MoveTo is on its way.
+    private bool _driving;
+    private string _playedKind;
+    private float _slowSince = -1f;
+    private int _holds;
+    private bool _hasDestination;
 
     // Events
+    /// <summary>The destination given through <see cref="MoveTo"/> is reached: raised once per destination.</summary>
     public event Action OnDestinationReached;
 
     // Follow
@@ -60,6 +102,15 @@ namespace CupkekGames.Navigation
     private bool _followingActive = false;
 
     private float _stopDistance => _navMeshAgent.stoppingDistance;
+
+    // Speed: the agent's own top speed (the time scale and a root act on it).
+    private float _baseSpeed;
+    private float _timeScale = 1f;
+    private bool _rooted;
+    // Paused by a time scale of zero: what was running comes back with time.
+    private bool _paused;
+    private bool _followBeforePause;
+    private bool _agentBeforePause;
 
     // Other
     private Tween _dashTween;
@@ -75,75 +126,184 @@ namespace CupkekGames.Navigation
 
       _navMeshAgent.enabled = false;
 
+      _baseSpeed = Speed;
       _navMeshAgent.speed = Speed;
       _navMeshAgent.angularSpeed = AngularSpeed;
       _navMeshAgent.acceleration = Acceleration;
       _navMeshAgent.stoppingDistance = StoppingDistance;
-      // _navMeshAgent.radius = Radius;
-      // _navMeshAgent.height = Height;
+      _navMeshAgent.updateRotation = _turnSharpness <= 0f;
 
-      _animationController = GetComponentInChildren<IAnimationStateController>();
+      SetAnimationController(GetComponentInChildren<IAnimationStateController>());
     }
 
+    private void OnDestroy()
+    {
+      if (_animationController != null) _animationController.OnAnimationPlayed -= OnClipPlayed;
+    }
+
+    /// <summary>The rig locomotion plays on (a model swapped in after Awake).</summary>
     public void SetAnimationController(IAnimationStateController controller)
     {
+      if (_animationController != null) _animationController.OnAnimationPlayed -= OnClipPlayed;
       _animationController = controller;
+      _idleClip = null;
+      _playedKind = null;
+      if (_animationController == null) return;
+      _animationController.TryGetClip(AnimationKinds.Idle, out _idleClip);
+      _animationController.OnAnimationPlayed += OnClipPlayed;
     }
 
-    public void StartMonitoringAgent()
+    /// <summary>The agent's own top speed; a time scale and a root act on it.</summary>
+    public float BaseSpeed
     {
-      if (_monitorCoroutine != null)
+      get => _baseSpeed;
+      set
       {
-        return;
-      }
-
-      _monitorCoroutine = StartCoroutine(AgentMonitorCoroutine());
-    }
-
-    public void StopMonitoringAgent()
-    {
-      if (_monitorCoroutine != null)
-      {
-        StopCoroutine(_monitorCoroutine);
-        _monitorCoroutine = null;
+        _baseSpeed = Mathf.Max(0f, value);
+        ApplySpeed();
       }
     }
 
-    private void OnDisable()
+    // ── Locomotion ────────────────────────────────────────────────────────
+
+    /// <summary>Locomotion drives the rig from now on (its move kind and Idle by the agent's speed).</summary>
+    public void StartLocomotion()
     {
-      StopMonitoringAgent();
-      StopFollow();
+      _driving = true;
+      _playedKind = null;
     }
 
-    private IEnumerator AgentMonitorCoroutine()
+    /// <summary>Locomotion lets the rig be (another system owns it for good).</summary>
+    public void StopLocomotion()
     {
-      WaitForSeconds wait = new(MonitorFrequency);
+      _driving = false;
+      _playedKind = null;
+      _slowSince = -1f;
+    }
 
-      while (true)
+    /// <summary>Whether locomotion drives the rig.</summary>
+    public bool DrivesLocomotion => _driving;
+
+    /// <summary>
+    /// A one-shot owns the rig (a gather, a throw, sitting) while the hold
+    /// lives; holds count, and as the last ends locomotion plays what the
+    /// agent really does at once. Dispose it to release.
+    /// </summary>
+    public IDisposable HoldLocomotion()
+    {
+      _holds++;
+      _playedKind = null;
+      return new LocomotionHold(this);
+    }
+
+    /// <summary>Whether a one-shot holds the rig now.</summary>
+    public bool LocomotionHeld => _holds > 0;
+
+    private void ReleaseHold()
+    {
+      if (_holds <= 0) return;
+      _holds--;
+      _playedKind = null;
+      _slowSince = -1f;
+    }
+
+    private sealed class LocomotionHold : IDisposable
+    {
+      private NavMeshAgentController _owner;
+
+      public LocomotionHold(NavMeshAgentController owner) => _owner = owner;
+
+      public void Dispose()
       {
-        if (_navMeshAgent.enabled)
-        {
-          AgentMonitorTick();
-        }
-
-        yield return wait;
+        if (_owner != null) _owner.ReleaseHold();
+        _owner = null;
       }
     }
 
-    private void AgentMonitorTick()
+    /// <summary>The agent walks to <paramref name="destination"/>; <see cref="OnDestinationReached"/> is raised once as it gets there.</summary>
+    public void MoveTo(Vector3 destination)
     {
-      // Rigs without an animation backend still navigate; they just don't animate.
-      if (_navMeshAgent.remainingDistance <= _stopDistance)
-      {
-        _animationController?.Play(AnimationKinds.Idle);
-
-        OnDestinationReached?.Invoke();
-      }
-      else
-      {
-        _animationController?.Play(_moveAnimationKind);
-      }
+      if (!_navMeshAgent.isActiveAndEnabled || !_navMeshAgent.isOnNavMesh) return;
+      _navMeshAgent.SetDestination(destination);
+      _hasDestination = true;
     }
+
+    /// <summary>The walk to a destination is called off: no arrival is raised for it.</summary>
+    public void ClearDestination()
+    {
+      if (_navMeshAgent.isActiveAndEnabled && _navMeshAgent.isOnNavMesh && _navMeshAgent.hasPath) _navMeshAgent.ResetPath();
+      _hasDestination = false;
+    }
+
+    private void Update()
+    {
+      if (_paused) return;
+
+      if (_navMeshAgent.isActiveAndEnabled)
+      {
+        CheckArrival();
+        Turn();
+      }
+
+      if (_driving && _holds == 0) Animate();
+    }
+
+    private void CheckArrival()
+    {
+      if (!_hasDestination || _navMeshAgent.pathPending) return;
+      if (_navMeshAgent.hasPath && _navMeshAgent.remainingDistance > _stopDistance + 0.05f) return;
+      _hasDestination = false;
+      OnDestinationReached?.Invoke();
+    }
+
+    private void Turn()
+    {
+      if (_turnSharpness <= 0f) return;
+      Vector3 velocity = _navMeshAgent.velocity;
+      velocity.y = 0f;
+      if (velocity.sqrMagnitude < 0.09f) return;
+      Quaternion facing = Quaternion.LookRotation(velocity);
+      transform.rotation = Quaternion.Slerp(transform.rotation, facing, 1f - Mathf.Exp(-_turnSharpness * Time.deltaTime));
+    }
+
+    // The rig plays what the agent really does, only when that changes.
+    private void Animate()
+    {
+      if (_animationController == null) return;
+
+      Vector3 velocity = _navMeshAgent.isActiveAndEnabled ? _navMeshAgent.velocity : Vector3.zero;
+      velocity.y = 0f;
+      float speed = velocity.magnitude;
+      bool walking = _playedKind != null && _playedKind != AnimationKinds.Idle;
+      bool moving = speed > (walking ? _stopMovingSpeed : _startMovingSpeed);
+      if (walking && !moving)
+      {
+        if (_slowSince < 0f) _slowSince = Time.time;
+        if (Time.time - _slowSince < _stopDelay) moving = true;
+      }
+      else _slowSince = -1f;
+
+      string kind = moving ? MoveKindOnRig() : AnimationKinds.Idle;
+      if (kind == _playedKind) return;
+      _playedKind = kind;
+      _animationController.Play(kind);
+    }
+
+    // The move kind this rig can play: a rig without it (no Run of its own)
+    // walks, never sliding on the pose it held.
+    private string MoveKindOnRig()
+      => _moveAnimationKind == AnimationKinds.Walk || _animationController.TryGetClip(_moveAnimationKind, out _)
+        ? _moveAnimationKind
+        : AnimationKinds.Walk;
+
+    // Idle came on by itself while the agent moves (a one-shot's end): play
+    // what it really does on the next frame.
+    private void OnClipPlayed(AnimationClip clip)
+    {
+      if (clip != null && clip == _idleClip && _playedKind != null && _playedKind != AnimationKinds.Idle) _playedKind = null;
+    }
+
+    // ── Follow ────────────────────────────────────────────────────────────
 
     public void FollowTarget(Transform follow, bool forceAnimation, bool debug)
     {
@@ -158,6 +318,7 @@ namespace CupkekGames.Navigation
       }
 
       StopFollow();
+      if (follow == null) return;
 
       _follow = follow;
       _followingActive = true;
@@ -169,7 +330,8 @@ namespace CupkekGames.Navigation
         _followCoroutine = StartCoroutine(FollowTargetCoroutine(follow, debug));
       }
 
-      if (forceAnimation)
+      // Locomotion animates a driven rig by itself.
+      if (forceAnimation && !_driving)
       {
         if (IsInRange(_navMeshAgent.transform, follow, _stopDistance, 0.1f))
         {
@@ -217,7 +379,7 @@ namespace CupkekGames.Navigation
         if (IsInRange(_navMeshAgent.transform, follow, _stopDistance, 0f))
         {
           _navMeshAgent.enabled = false;
-          _animationController?.Play(AnimationKinds.Idle);
+          if (!_driving) _animationController?.Play(AnimationKinds.Idle);
           LookAtTarget(follow);
           if (debug)
           {
@@ -264,6 +426,12 @@ namespace CupkekGames.Navigation
       return _followCoroutine != null;
     }
 
+    private void OnDisable()
+    {
+      StopFollow();
+      _playedKind = null;
+    }
+
     private void LookAtTarget(Transform target)
     {
       if (target == null || transform == null)
@@ -305,19 +473,21 @@ namespace CupkekGames.Navigation
 
     public void StopAll()
     {
-      OnDisable();
+      ClearDestination();
+      StopFollow();
     }
 
+    /// <summary>The agent is rooted (it cannot move) or free again at its own speed.</summary>
     public void Root(bool root)
     {
-      if (root)
-      {
-        _navMeshAgent.speed = 0;
-      }
-      else
-      {
-        _navMeshAgent.speed = Speed;
-      }
+      _rooted = root;
+      ApplySpeed();
+    }
+
+    private void ApplySpeed()
+    {
+      if (_navMeshAgent == null) return;
+      _navMeshAgent.speed = _rooted ? 0f : _baseSpeed * _timeScale;
     }
 
     public bool MakeSureOnNavMesh()
@@ -352,9 +522,11 @@ namespace CupkekGames.Navigation
         _navMeshAgent.avoidancePriority = avoidancePriority;
       }
 
-      // Stop any current navigation and disable the NavMeshAgent
+      // Stop any current navigation (the agent off while the tween moves it);
+      // the caller's own clip owns the rig meanwhile.
+      ClearDestination();
       StopFollow();
-      StopMonitoringAgent();
+      IDisposable hold = HoldLocomotion();
 
       // Tween movement using PrimeTween and await its completion
       try
@@ -378,6 +550,7 @@ namespace CupkekGames.Navigation
       }
       finally
       {
+        hold.Dispose();
         if (_navMeshAgent != null)
         {
           _navMeshAgent.Warp(hit.position);
@@ -404,6 +577,7 @@ namespace CupkekGames.Navigation
       if (_timeBundle != null)
       {
         _timeBundle.TimeContext.OnTimeScaleChanged -= OnTimeScaleChanged;
+        _timeBundle = null;
       }
     }
 
@@ -445,27 +619,33 @@ namespace CupkekGames.Navigation
       return (a.position - b.position).sqrMagnitude <= rangeSqr;
     }
 
+    // Time stopped: the follow pauses and locomotion freezes; time again:
+    // only what was running comes back, at the agent's own speed scaled.
     private void OnTimeScaleChanged(float timeScale)
     {
-      if (_navMeshAgent != null)
+      if (_navMeshAgent == null) return;
+
+      if (timeScale <= float.Epsilon)
       {
-        if (timeScale <= float.Epsilon)
-        {
-          StopFollow();
-          StopMonitoringAgent();
-        }
-        else
-        {
-          float newSpeed = Speed * timeScale;
-
-          _navMeshAgent.speed = newSpeed;
-          _navMeshAgent.angularSpeed = AngularSpeed * timeScale;
-          _navMeshAgent.acceleration = Acceleration * timeScale;
-
-          StartMonitoringAgent();
-          FollowTarget(_follow, false, false);
-        }
+        if (_paused) return;
+        _paused = true;
+        _followBeforePause = _followCoroutine != null;
+        _agentBeforePause = _navMeshAgent.enabled;
+        StopFollow();
+        return;
       }
+
+      _timeScale = timeScale;
+      ApplySpeed();
+      _navMeshAgent.angularSpeed = AngularSpeed * timeScale;
+      _navMeshAgent.acceleration = Acceleration * timeScale;
+
+      if (!_paused) return;
+      _paused = false;
+      _playedKind = null;
+      if (_followBeforePause && _follow != null) FollowTarget(_follow, false, false);
+      else if (_agentBeforePause) _navMeshAgent.enabled = true;
+      _followBeforePause = false;
     }
   }
 }
